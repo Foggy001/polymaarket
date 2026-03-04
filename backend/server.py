@@ -360,17 +360,13 @@ async def startup_event():
     
     # Initialize Polymarket client
     private_key = os.environ.get('POLYMARKET_PRIVATE_KEY')
-    api_key = os.environ.get('POLYMARKET_API_KEY')
-    api_secret = os.environ.get('POLYMARKET_API_SECRET')
-    api_passphrase = os.environ.get('POLYMARKET_API_PASSPHRASE')
+    signature_type = int(os.environ.get('SIGNATURE_TYPE', '1'))  # Default to POLY_PROXY
     
     if private_key:
         try:
             polymarket_client = PolymarketClient(
                 private_key=private_key,
-                api_key=api_key,
-                api_secret=api_secret,
-                api_passphrase=api_passphrase
+                signature_type=signature_type
             )
             await polymarket_client.initialize()
             logger.info("Polymarket client initialized")

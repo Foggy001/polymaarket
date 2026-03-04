@@ -68,37 +68,40 @@ class PolymarketClient:
         """Initialize the client"""
         if HAS_CLOB_CLIENT:
             try:
-                # Create client with just private key first
+                # For POLY_PROXY (signature_type=1), we need to derive the funder address
+                # from the Polymarket private key
+                from eth_account import Account
+                
+                poly_account = Account.from_key(self.private_key)
+                derived_funder = poly_account.address
+                
+                logger.info(f"Polymarket key address: {derived_funder}")
+                
+                # Create CLOB client
                 self.clob_client = ClobClient(
                     host=CLOB_HOST,
                     key=self.private_key,
                     chain_id=POLYGON_CHAIN_ID,
                     signature_type=self.signature_type,
-                    funder=self.funder_address
+                    funder=derived_funder
                 )
                 
                 # Get address from client
                 self.address = self.clob_client.get_address()
-                logger.info(f"CLOB Client address: {self.address}")
+                logger.info(f"CLOB Client signer address: {self.address}")
                 
-                # Try to derive or use existing API credentials
-                if self.api_key and self.api_secret and self.api_passphrase:
-                    # Use provided credentials
-                    creds = ApiCreds(
-                        api_key=self.api_key,
-                        api_secret=self.api_secret,
-                        api_passphrase=self.api_passphrase
-                    )
-                    self.clob_client.set_api_creds(creds)
-                    logger.info("Using provided API credentials")
-                else:
-                    # Derive new credentials
-                    logger.info("Deriving API credentials...")
+                # Derive API credentials
+                logger.info("Deriving API credentials...")
+                try:
                     creds = self.clob_client.create_or_derive_api_creds()
                     self.api_key = creds.api_key
                     self.api_secret = creds.api_secret
                     self.api_passphrase = creds.api_passphrase
                     logger.info("API credentials derived successfully")
+                    logger.info(f"API Key: {self.api_key[:20]}...")
+                except Exception as creds_err:
+                    logger.warning(f"Could not derive credentials: {creds_err}")
+                    logger.info("Trading may be limited, but market data available")
                 
                 self.initialized = True
                 logger.info("PolymarketClient initialized with CLOB SDK")
