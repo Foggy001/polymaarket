@@ -68,22 +68,16 @@ class PolymarketClient:
         """Initialize the client"""
         if HAS_CLOB_CLIENT:
             try:
-                # For POLY_PROXY (signature_type=1), we need to derive the funder address
-                # from the Polymarket private key
-                from eth_account import Account
+                # For POLY_PROXY (signature_type=1), use the funder address from settings
+                logger.info(f"Initializing with funder address: {self.funder_address}")
                 
-                poly_account = Account.from_key(self.private_key)
-                derived_funder = poly_account.address
-                
-                logger.info(f"Polymarket key address: {derived_funder}")
-                
-                # Create CLOB client
+                # Create CLOB client with funder address
                 self.clob_client = ClobClient(
                     host=CLOB_HOST,
                     key=self.private_key,
                     chain_id=POLYGON_CHAIN_ID,
                     signature_type=self.signature_type,
-                    funder=derived_funder
+                    funder=self.funder_address
                 )
                 
                 # Get address from client
@@ -93,11 +87,16 @@ class PolymarketClient:
                 # Derive API credentials
                 logger.info("Deriving API credentials...")
                 try:
-                    creds = self.clob_client.create_or_derive_api_creds()
+                    # Use derive_api_key with nonce=0 for proper L2 auth
+                    creds = self.clob_client.derive_api_key(nonce=0)
                     self.api_key = creds.api_key
                     self.api_secret = creds.api_secret
                     self.api_passphrase = creds.api_passphrase
-                    logger.info("API credentials derived successfully")
+                    
+                    # Set the credentials on the client for L2 auth
+                    self.clob_client.set_api_creds(creds)
+                    
+                    logger.info("API credentials derived and set successfully!")
                     logger.info(f"API Key: {self.api_key[:20]}...")
                 except Exception as creds_err:
                     logger.warning(f"Could not derive credentials: {creds_err}")
@@ -229,11 +228,18 @@ class PolymarketClient:
     async def get_balance(self) -> Dict[str, Any]:
         """Get account balance and allowances"""
         try:
-            if self.clob_client:
-                balance = self.clob_client.get_balance_allowance()
+            if self.clob_client and self.api_key:
+                from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+                
+                # Get COLLATERAL (USDC) balance
+                params = BalanceAllowanceParams(
+                    asset_type=AssetType.COLLATERAL,
+                    signature_type=self.signature_type
+                )
+                balance = self.clob_client.get_balance_allowance(params)
                 return balance
             else:
-                return {"balance": "N/A", "allowance": "N/A", "note": "CLOB client not initialized"}
+                return {"balance": "N/A", "allowance": "N/A", "note": "CLOB client not fully initialized"}
             
         except Exception as e:
             logger.error(f"Error getting balance: {e}")

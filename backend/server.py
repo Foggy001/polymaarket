@@ -360,20 +360,22 @@ async def startup_event():
     
     # Initialize Polymarket client
     private_key = os.environ.get('POLYMARKET_PRIVATE_KEY')
+    funder_address = os.environ.get('POLYMARKET_FUNDER_ADDRESS')
     signature_type = int(os.environ.get('SIGNATURE_TYPE', '1'))  # Default to POLY_PROXY
     
-    if private_key:
+    if private_key and funder_address:
         try:
             polymarket_client = PolymarketClient(
                 private_key=private_key,
-                signature_type=signature_type
+                signature_type=signature_type,
+                funder_address=funder_address
             )
             await polymarket_client.initialize()
             logger.info("Polymarket client initialized")
         except Exception as e:
             logger.error(f"Failed to initialize Polymarket client: {e}")
     else:
-        logger.warning("POLYMARKET_PRIVATE_KEY not set - trading disabled")
+        logger.warning("POLYMARKET_PRIVATE_KEY or POLYMARKET_FUNDER_ADDRESS not set - trading disabled")
     
     # Initialize trading engine
     trading_engine = TradingEngine(
