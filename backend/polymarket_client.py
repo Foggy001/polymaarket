@@ -227,15 +227,26 @@ class PolymarketClient:
         amount: float,
         price_limit: float
     ) -> Dict[str, Any]:
-        """Place a market order"""
+        """Place a market order - fastest execution"""
         if not self.clob_client:
             return {"success": False, "error": "Client not initialized"}
         
         try:
-            from py_clob_client.clob_types import MarketOrderArgs, OrderType
+            from py_clob_client.clob_types import MarketOrderArgs, OrderType, PartialCreateOrderOptions
             from py_clob_client.order_builder.constants import BUY, SELL
             
             side_enum = BUY if side.upper() == "BUY" else SELL
+            
+            # Get neg_risk status for this token (CRITICAL for valid signature)
+            try:
+                neg_risk = self.clob_client.get_neg_risk(token_id)
+                logger.info(f"Token {token_id[:20]}... neg_risk={neg_risk}")
+            except Exception as e:
+                logger.warning(f"Could not get neg_risk, defaulting to False: {e}")
+                neg_risk = False
+            
+            # Create order options with neg_risk
+            options = PartialCreateOrderOptions(neg_risk=neg_risk)
             
             order_args = MarketOrderArgs(
                 token_id=token_id,
@@ -244,14 +255,16 @@ class PolymarketClient:
                 price=price_limit
             )
             
-            signed_order = self.clob_client.create_market_order(order_args)
+            # Create and post market order with options
+            signed_order = self.clob_client.create_market_order(order_args, options)
             result = self.clob_client.post_order(signed_order, OrderType.FOK)
             
             logger.info(f"Order placed: {result}")
             return {
                 "success": True,
                 "order_id": result.get("orderID"),
-                "status": result.get("status")
+                "status": result.get("status"),
+                "details": result
             }
             
         except Exception as e:
@@ -270,10 +283,18 @@ class PolymarketClient:
             return {"success": False, "error": "Client not initialized"}
         
         try:
-            from py_clob_client.clob_types import OrderArgs, OrderType
+            from py_clob_client.clob_types import OrderArgs, OrderType, PartialCreateOrderOptions
             from py_clob_client.order_builder.constants import BUY, SELL
             
             side_enum = BUY if side.upper() == "BUY" else SELL
+            
+            # Get neg_risk status for this token
+            try:
+                neg_risk = self.clob_client.get_neg_risk(token_id)
+            except:
+                neg_risk = False
+            
+            options = PartialCreateOrderOptions(neg_risk=neg_risk)
             
             order_args = OrderArgs(
                 price=price,
@@ -282,7 +303,7 @@ class PolymarketClient:
                 token_id=token_id
             )
             
-            signed_order = self.clob_client.create_order(order_args)
+            signed_order = self.clob_client.create_order(order_args, options)
             result = self.clob_client.post_order(signed_order, OrderType.GTC)
             
             return {
