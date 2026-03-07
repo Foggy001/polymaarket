@@ -31,16 +31,24 @@ logger = logging.getLogger(__name__)
 user_wallets: Dict[int, Dict[str, str]] = {}
 pending_bets: Dict[int, Dict[str, Any]] = {}
 user_states: Dict[int, str] = {}  # Track conversation state
+user_proxies: Dict[int, str] = {}  # User proxies
+
+# Default proxy
+DEFAULT_PROXY = os.environ.get('PROXY', '163.5.176.118:45228:5GEF73OD:SD63124L')
 
 
 async def get_user_client(user_id: int) -> Optional[PolymarketClient]:
     """Get Polymarket client for user"""
+    # Get proxy
+    proxy = user_proxies.get(user_id, DEFAULT_PROXY)
+    
     if user_id in user_wallets:
         wallet = user_wallets[user_id]
         client = PolymarketClient(
             private_key=wallet['private_key'],
             funder_address=wallet['funder_address'],
-            signature_type=1
+            signature_type=1,
+            proxy=proxy
         )
         await client.initialize()
         return client
@@ -53,7 +61,8 @@ async def get_user_client(user_id: int) -> Optional[PolymarketClient]:
         client = PolymarketClient(
             private_key=private_key,
             funder_address=funder_address,
-            signature_type=1
+            signature_type=1,
+            proxy=proxy
         )
         await client.initialize()
         return client
@@ -110,6 +119,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/wallet - Текущий кошелек\n"
         "/setwallet - Сменить кошелек\n"
         "/positions - Ваши позиции\n"
+        "/proxy - Текущий прокси\n"
+        "/setproxy - Сменить прокси\n"
         "/reset - Сбросить все данные\n\n"
         "Пример ссылки:\n"
         "`https://polymarket.com/sports/dota-2/...`",
@@ -229,9 +240,46 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "⚠️ *Сбросить все данные?*\n\n"
         "• Настройки кошелька\n"
-        "• Незавершенные ставки",
+        "• Незавершенные ставки\n"
+        "• Прокси",
         parse_mode='Markdown',
         reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def proxy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show current proxy"""
+    user_id = update.effective_user.id
+    current_proxy = user_proxies.get(user_id, DEFAULT_PROXY)
+    
+    if current_proxy:
+        parts = current_proxy.split(':')
+        if len(parts) >= 2:
+            masked = f"{parts[0]}:{parts[1]}:***:***"
+        else:
+            masked = current_proxy
+    else:
+        masked = "Не настроен"
+    
+    await update.message.reply_text(
+        f"🌐 *Текущий прокси:*\n`{masked}`",
+        parse_mode='Markdown'
+    )
+
+
+async def setproxy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Set proxy"""
+    user_id = update.effective_user.id
+    user_states[user_id] = 'waiting_proxy'
+    
+    await update.message.reply_text(
+        "🌐 *Настройка прокси*\n\n"
+        "Отправьте прокси в формате:\n"
+        "`host:port:user:password`\n\n"
+        "или без авторизации:\n"
+        "`host:port`\n\n"
+        "/cancel - отменить",
+        parse_mode='Markdown'
     )
 
 
@@ -324,6 +372,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del user_states[user_id]
         
         await show_bet_confirmation(update, user_id)
+        return
+    
+    elif state == 'waiting_proxy':
+        # Receiving proxy
+        proxy_str = text.strip()
+        parts = proxy_str.split(':')
+        
+        if len(parts) not in [2, 4]:
+            await update.message.reply_text(
+                "❌ Неверный формат.\n\n"
+                "Используйте: `host:port:user:pass`\n"
+                "или: `host:port`",
+                parse_mode='Markdown'
+            )
+            return
+        
+        user_proxies[user_id] = proxy_str
+        del user_states[user_id]
+        
+        # Delete message with proxy for security
+        try:
+            await update.message.delete()
+        except:
+            pass
+        
+        await update.message.reply_text(
+            f"✅ *Прокси настроен!*\n\n"
+            f"`{parts[0]}:{parts[1]}:***:***`",
+            parse_mode='Markdown'
+        )
         return
     
     # Check if it's a Polymarket link
@@ -462,6 +540,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             del pending_bets[user_id]
         if user_id in user_states:
             del user_states[user_id]
+        if user_id in user_proxies:
+            del user_proxies[user_id]
         context.user_data.clear()
         await query.edit_message_text("✅ Все данные сброшены!\n\n/setwallet - настроить кошелек")
         return
@@ -794,6 +874,8 @@ def main():
     app.add_handler(CommandHandler('wallet', wallet))
     app.add_handler(CommandHandler('setwallet', setwallet))
     app.add_handler(CommandHandler('positions', positions))
+    app.add_handler(CommandHandler('proxy', proxy))
+    app.add_handler(CommandHandler('setproxy', setproxy))
     app.add_handler(CommandHandler('reset', reset))
     app.add_handler(CommandHandler('cancel', cancel))
     
