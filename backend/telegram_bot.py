@@ -581,6 +581,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Parse outcomes
         outcomes_raw = market.get('outcomes', '["Yes", "No"]')
         prices_raw = market.get('outcomePrices', '["0", "0"]')
+        tokens_raw = market.get('clobTokenIds', '[]')
         
         if isinstance(outcomes_raw, str):
             outcomes = json_lib.loads(outcomes_raw)
@@ -591,8 +592,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             outcome_prices = json_lib.loads(prices_raw)
         else:
             outcome_prices = prices_raw
-        
-        tokens = market.get('clobTokenIds', [])
+            
+        if isinstance(tokens_raw, str):
+            tokens = json_lib.loads(tokens_raw)
+        else:
+            tokens = tokens_raw
         
         pending_bets[user_id]['outcomes'] = outcomes
         pending_bets[user_id]['tokens'] = tokens
