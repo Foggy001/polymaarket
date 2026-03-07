@@ -1,8 +1,0 @@
-[phases.setup]
-nixPkgs = ["python311"]
-
-[phases.install]
-cmds = ["cd backend && pip install -r requirements-railway.txt"]
-
-[start]
-cmd = "cd backend && python telegram_bot.py"
