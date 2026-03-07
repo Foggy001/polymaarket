@@ -262,19 +262,20 @@ class PolymarketClient:
             }
         
         try:
-            from py_clob_client.clob_types import OrderArgs, OrderType, MarketOrderArgs
+            from py_clob_client.clob_types import MarketOrderArgs
             from py_clob_client.order_builder.constants import BUY, SELL
             
             side_enum = BUY if side.upper() == "BUY" else SELL
             
-            # Create market order
+            # Create market order with all required args
             order = MarketOrderArgs(
                 token_id=token_id,
                 amount=amount,
+                side=side_enum,
                 price=price_limit
             )
             
-            result = self.clob_client.create_and_post_market_order(order, side_enum)
+            result = self.clob_client.create_and_post_market_order(order)
             
             logger.info(f"Market order placed: {result}")
             return {
