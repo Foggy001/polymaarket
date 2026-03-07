@@ -61,6 +61,43 @@ async def get_user_client(user_id: int) -> Optional[PolymarketClient]:
     return None
 
 
+async def get_wallet_balance(wallet_address: str) -> float:
+    """Get USDC.e balance directly from Polygon blockchain"""
+    import httpx
+    
+    USDC_E = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+    
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "eth_call",
+        "params": [{
+            "to": USDC_E,
+            "data": f"0x70a08231000000000000000000000000{wallet_address[2:].lower()}"
+        }, "latest"],
+        "id": 1
+    }
+    
+    rpcs = [
+        "https://polygon-bor-rpc.publicnode.com",
+        "https://1rpc.io/matic",
+        "https://polygon.drpc.org"
+    ]
+    
+    async with httpx.AsyncClient(timeout=10) as client:
+        for rpc in rpcs:
+            try:
+                resp = await client.post(rpc, json=payload)
+                result = resp.json()
+                if 'result' in result and result['result']:
+                    balance_wei = int(result['result'], 16)
+                    return balance_wei / 1e6  # USDC has 6 decimals
+            except Exception as e:
+                logger.error(f"RPC {rpc} error: {e}")
+                continue
+    
+    return 0.0
+
+
 # === COMMANDS ===
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -84,16 +121,25 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show balance"""
     user_id = update.effective_user.id
     
+    # Get wallet address
+    if user_id in user_wallets:
+        wallet_address = user_wallets[user_id]['funder_address']
+    else:
+        wallet_address = os.environ.get('POLYMARKET_FUNDER_ADDRESS')
+    
+    if not wallet_address:
+        await update.message.reply_text("❌ Кошелек не настроен. /setwallet")
+        return
+    
     try:
-        client = await get_user_client(user_id)
-        if not client:
-            await update.message.reply_text("❌ Кошелек не настроен. /setwallet")
-            return
+        # Get balance from blockchain
+        balance_amount = await get_wallet_balance(wallet_address)
         
-        balance_data = await client.get_balance()
-        balance_amount = balance_data.get('balance', '0')
-        
-        await update.message.reply_text(f"💰 *Баланс:* {balance_amount} USDC", parse_mode='Markdown')
+        await update.message.reply_text(
+            f"💰 *Баланс:* {balance_amount:.2f} USDC.e\n\n"
+            f"Кошелек: `{wallet_address[:6]}...{wallet_address[-4:]}`",
+            parse_mode='Markdown'
+        )
     except Exception as e:
         logger.error(f"Balance error: {e}")
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
@@ -400,9 +446,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pending_bets[user_id]['outcome'] = outcome
         pending_bets[user_id]['token_id'] = token_id
         
-        client = await get_user_client(user_id)
-        balance_data = await client.get_balance()
-        balance = float(balance_data.get('balance', 0))
+        # Get wallet address
+        if user_id in user_wallets:
+            wallet_address = user_wallets[user_id]['funder_address']
+        else:
+            wallet_address = os.environ.get('POLYMARKET_FUNDER_ADDRESS')
+        
+        balance = await get_wallet_balance(wallet_address)
+        pending_bets[user_id]['balance'] = balance
         
         keyboard = [
             [
@@ -417,7 +468,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await query.edit_message_text(
             f"Выбрано: *{outcome_text}*\n\n"
-            f"💰 Баланс: {balance:.2f} USDC\n\n"
+            f"💰 Баланс: {balance:.2f} USDC.e\n\n"
             f"Сумма ставки:",
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
@@ -433,15 +484,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("💵 Введите сумму в USDC:")
             return
         
-        client = await get_user_client(user_id)
-        balance_data = await client.get_balance()
-        balance = float(balance_data.get('balance', 0))
+        balance = pending_bets[user_id].get('balance', 0)
         
         percent = int(amount_type)
         amount = balance * (percent / 100)
         
         if amount < 1:
-            await query.edit_message_text(f"❌ Недостаточно средств.\nБаланс: {balance:.2f} USDC")
+            await query.edit_message_text(f"❌ Недостаточно средств.\nБаланс: {balance:.2f} USDC.e")
             return
         
         pending_bets[user_id]['amount'] = amount
