@@ -7,6 +7,12 @@ import os
 import re
 import logging
 from typing import Optional, Dict, Any, List
+from pathlib import Path
+
+from dotenv import load_dotenv
+# Load .env from the same directory as this script
+env_path = Path(__file__).parent / '.env'
+load_dotenv(env_path)
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -37,6 +43,8 @@ user_proxies: Dict[int, str] = {}  # User proxies
 DEFAULT_PROXY = os.environ.get('PROXY', '163.5.176.118:45228:5GEF73OD:SD63124L')
 # Default signature type (2 = POLY_GNOSIS_SAFE for MetaMask login)
 DEFAULT_SIGNATURE_TYPE = int(os.environ.get('SIGNATURE_TYPE', '2'))
+
+logger.info(f"Loaded SIGNATURE_TYPE={DEFAULT_SIGNATURE_TYPE}")
 
 
 async def get_user_client(user_id: int) -> Optional[PolymarketClient]:
@@ -346,7 +354,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         user_wallets[user_id] = {
             'private_key': private_key,
-            'funder_address': funder_address
+            'funder_address': funder_address,
+            'signature_type': DEFAULT_SIGNATURE_TYPE  # Use signature_type=2 for MetaMask
         }
         
         del user_states[user_id]
