@@ -354,6 +354,7 @@ async def handle_polymarket_link(update: Update, context: ContextTypes.DEFAULT_T
     await update.message.reply_text("🔍 Загружаю...")
     
     try:
+        import json as json_lib
         # Fetch market from Gamma API directly for full data
         import httpx
         async with httpx.AsyncClient(timeout=15) as http:
@@ -367,8 +368,21 @@ async def handle_polymarket_link(update: Update, context: ContextTypes.DEFAULT_T
         market = markets[0]
         
         question = market.get('question', 'Unknown')
-        outcomes = market.get('outcomes', ['Yes', 'No'])
-        outcome_prices = market.get('outcomePrices', ['0', '0'])
+        
+        # Parse outcomes and prices (they come as JSON strings)
+        outcomes_raw = market.get('outcomes', '["Yes", "No"]')
+        prices_raw = market.get('outcomePrices', '["0", "0"]')
+        
+        if isinstance(outcomes_raw, str):
+            outcomes = json_lib.loads(outcomes_raw)
+        else:
+            outcomes = outcomes_raw
+            
+        if isinstance(prices_raw, str):
+            outcome_prices = json_lib.loads(prices_raw)
+        else:
+            outcome_prices = prices_raw
+        
         tokens = market.get('clobTokenIds', [])
         
         # Store market data
