@@ -1,0 +1,11 @@
+# Telegram Bot
+python-telegram-bot==21.0
+python-dotenv==1.0.0
+
+# Polymarket
+py-clob-client==0.34.6
+httpx[socks]==0.28.1
+web3==7.0.0
+
+# Database (optional)
+pymongo==4.5.0
