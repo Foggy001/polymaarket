@@ -380,14 +380,10 @@ async def handle_polymarket_link(update: Update, context: ContextTypes.DEFAULT_T
             'slug': slug
         }
         
-        # Group markets by type
+        # Group markets by type - only match winner and map winner
         market_types = {
             'moneyline': '🏆 Победитель матча',
             'child_moneyline': '🎮 Победитель карты',
-            'map_handicap': '📊 Фора',
-            'totals': '📈 Тотал карт',
-            'kill_over_under_game': '💀 Тотал убийств',
-            'first_blood_game': '🩸 Первая кровь',
         }
         
         # Create menu with market categories
@@ -404,13 +400,6 @@ async def handle_polymarket_link(update: Update, context: ContextTypes.DEFAULT_T
                         callback_data=f"mtype_{mtype}"
                     )
                 ])
-        
-        # Add "other" for remaining types
-        other_count = len([m for m in all_markets if m.get('sportsMarketType') not in market_types])
-        if other_count > 0:
-            keyboard.append([
-                InlineKeyboardButton(f"🎲 Другие ({other_count})", callback_data="mtype_other")
-            ])
         
         event_title = event.get('title', 'Событие')
         
@@ -490,17 +479,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         market_types = {
             'moneyline': '🏆 Победитель матча',
             'child_moneyline': '🎮 Победитель карты',
-            'map_handicap': '📊 Фора',
-            'totals': '📈 Тотал карт',
-            'kill_over_under_game': '💀 Тотал убийств',
-            'first_blood_game': '🩸 Первая кровь',
         }
         
         # Filter markets by type
-        if mtype == "other":
-            filtered = [m for m in all_markets if m.get('sportsMarketType') not in market_types]
-        else:
-            filtered = [m for m in all_markets if m.get('sportsMarketType') == mtype]
+        filtered = [m for m in all_markets if m.get('sportsMarketType') == mtype]
         
         if not filtered:
             await query.edit_message_text("❌ Нет рынков этого типа")
@@ -537,10 +519,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         market_types = {
             'moneyline': '🏆 Победитель матча',
             'child_moneyline': '🎮 Победитель карты',
-            'map_handicap': '📊 Фора',
-            'totals': '📈 Тотал карт',
-            'kill_over_under_game': '💀 Тотал убийств',
-            'first_blood_game': '🩸 Первая кровь',
         }
         
         keyboard = []
@@ -551,10 +529,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if mtype in market_types and mtype not in added_types:
                 added_types.add(mtype)
                 keyboard.append([InlineKeyboardButton(market_types[mtype], callback_data=f"mtype_{mtype}")])
-        
-        other_count = len([m for m in all_markets if m.get('sportsMarketType') not in market_types])
-        if other_count > 0:
-            keyboard.append([InlineKeyboardButton(f"🎲 Другие ({other_count})", callback_data="mtype_other")])
         
         await query.edit_message_text(
             f"🎯 *{event.get('title', 'Событие')}*\n\nВыберите тип ставки:",
