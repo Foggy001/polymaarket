@@ -140,6 +140,7 @@ class PolymarketClient:
             try:
                 logger.info(f"Initializing with funder: {self.funder_address}")
                 logger.info(f"Using proxy: {self.proxy_url[:40] if self.proxy_url else 'None'}...")
+                logger.info(f"Signature type: {self.signature_type}")
                 
                 self.clob_client = ClobClient(
                     host=CLOB_HOST,
@@ -151,6 +152,8 @@ class PolymarketClient:
                 
                 self.address = self.clob_client.get_address()
                 logger.info(f"Signer address: {self.address}")
+                logger.info(f"Builder sig_type: {self.clob_client.builder.sig_type}")
+                logger.info(f"Builder funder: {self.clob_client.builder.funder}")
                 
                 # Derive API credentials
                 logger.info("Deriving API credentials...")
