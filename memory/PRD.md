@@ -52,6 +52,12 @@ Telegram бот для ручных ставок на Polymarket. Пользов
 - Используется HTTPTransport с mounts для HTTP/HTTPS
 - Зависимость: `httpx[socks]` установлена для поддержки SOCKS5
 
+### Signature Type (FIXED - 2026-03-07)
+- **signature_type=2** (POLY_GNOSIS_SAFE) для входа через MetaMask
+- Private key = MetaMask кошелек (которым логинитесь в Polymarket)
+- Funder = Proxy Wallet address из настроек Polymarket
+- neg_risk параметр получается автоматически для каждого токена
+
 ### Balance Reading
 - Баланс USDC.e читается напрямую из Polygon blockchain через RPC
 - Не используется API Polymarket (показывает только trading balance)
@@ -64,8 +70,9 @@ Telegram бот для ручных ставок на Polymarket. Пользов
 
 ## Credentials (in .env)
 - `TELEGRAM_BOT_TOKEN` - токен Telegram бота
-- `POLYMARKET_PRIVATE_KEY` - приватный ключ с reveal.polymarket.com
+- `POLYMARKET_PRIVATE_KEY` - приватный ключ MetaMask (которым логинитесь)
 - `POLYMARKET_FUNDER_ADDRESS` - адрес proxy wallet
+- `SIGNATURE_TYPE` - тип подписи (2 для MetaMask login)
 - `PROXY` - прокси в формате host:port:user:pass
 - `MONGO_URL` - MongoDB connection string
 - `DB_NAME` - имя базы данных
@@ -74,8 +81,9 @@ Telegram бот для ручных ставок на Polymarket. Пользов
 
 ### Session 2026-03-07
 - ✅ Исправлена проблема гео-блокировки (403 Forbidden)
-- ✅ Реализован патч httpx клиента для py-clob-client
-- ✅ Протестирована работа API через прокси (get_balance, get_orders работают)
+- ✅ Исправлена ошибка invalid signature — нужен signature_type=2 для MetaMask
+- ✅ Добавлена поддержка neg_risk параметра для ордеров
+- ✅ Успешно размещен тестовый ордер на Polymarket!
 
 ### Previous Sessions
 - ✅ Полный редизайн проекта (GSI бот → Telegram бот)

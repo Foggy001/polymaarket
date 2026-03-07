@@ -35,6 +35,8 @@ user_proxies: Dict[int, str] = {}  # User proxies
 
 # Default proxy
 DEFAULT_PROXY = os.environ.get('PROXY', '163.5.176.118:45228:5GEF73OD:SD63124L')
+# Default signature type (2 = POLY_GNOSIS_SAFE for MetaMask login)
+DEFAULT_SIGNATURE_TYPE = int(os.environ.get('SIGNATURE_TYPE', '2'))
 
 
 async def get_user_client(user_id: int) -> Optional[PolymarketClient]:
@@ -47,7 +49,7 @@ async def get_user_client(user_id: int) -> Optional[PolymarketClient]:
         client = PolymarketClient(
             private_key=wallet['private_key'],
             funder_address=wallet['funder_address'],
-            signature_type=1,
+            signature_type=wallet.get('signature_type', DEFAULT_SIGNATURE_TYPE),
             proxy=proxy
         )
         await client.initialize()
@@ -61,7 +63,7 @@ async def get_user_client(user_id: int) -> Optional[PolymarketClient]:
         client = PolymarketClient(
             private_key=private_key,
             funder_address=funder_address,
-            signature_type=1,
+            signature_type=DEFAULT_SIGNATURE_TYPE,
             proxy=proxy
         )
         await client.initialize()
