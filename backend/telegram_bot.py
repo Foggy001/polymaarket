@@ -354,26 +354,47 @@ async def handle_polymarket_link(update: Update, context: ContextTypes.DEFAULT_T
     await update.message.reply_text("🔍 Загружаю...")
     
     try:
-        market = await client.fetch_market_by_slug(slug)
+        # Fetch market from Gamma API directly for full data
+        import httpx
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.get(f"https://gamma-api.polymarket.com/markets?slug={slug}")
+            markets = resp.json()
         
-        if not market:
+        if not markets:
             await update.message.reply_text("❌ Событие не найдено")
             return
         
-        pending_bets[user_id] = {'market': market, 'slug': slug}
+        market = markets[0]
         
         question = market.get('question', 'Unknown')
-        yes_token = market.get('yes_token_id')
-        no_token = market.get('no_token_id')
+        outcomes = market.get('outcomes', ['Yes', 'No'])
+        outcome_prices = market.get('outcomePrices', ['0', '0'])
+        tokens = market.get('clobTokenIds', [])
         
+        # Store market data
+        pending_bets[user_id] = {
+            'market': market,
+            'slug': slug,
+            'outcomes': outcomes,
+            'tokens': tokens
+        }
+        
+        # Create buttons for each outcome
         keyboard = []
-        if yes_token:
-            keyboard.append([InlineKeyboardButton("✅ YES", callback_data=f"bet_yes_{yes_token[:30]}")])
-        if no_token:
-            keyboard.append([InlineKeyboardButton("❌ NO", callback_data=f"bet_no_{no_token[:30]}")])
+        for i, outcome in enumerate(outcomes):
+            if i < len(tokens):
+                price = float(outcome_prices[i]) if i < len(outcome_prices) else 0
+                price_percent = int(price * 100)
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"{outcome} ({price_percent}%)", 
+                        callback_data=f"bet_{i}_{tokens[i][:25]}"
+                    )
+                ])
         
         await update.message.reply_text(
-            f"🎯 *{question}*\n\nВыберите исход:",
+            f"🎯 *{question}*\n\n"
+            f"Выберите исход:",
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
@@ -386,20 +407,20 @@ async def show_bet_confirmation(update_or_query, user_id: int):
     """Show bet confirmation"""
     bet = pending_bets.get(user_id, {})
     market = bet.get('market', {})
-    outcome = bet.get('outcome', 'N/A')
+    outcome_name = bet.get('outcome_name', 'N/A')
     amount = bet.get('amount', 0)
-    
-    outcome_text = "YES ✅" if outcome == "yes" else "NO ❌"
     
     keyboard = [[
         InlineKeyboardButton("✅ Подтвердить", callback_data="confirm_yes"),
         InlineKeyboardButton("❌ Отмена", callback_data="confirm_no")
     ]]
     
+    question = market.get('question', 'N/A')
+    
     text = (
         f"📋 *Подтверждение:*\n\n"
-        f"{market.get('question', 'N/A')}\n"
-        f"Исход: *{outcome_text}*\n"
+        f"{question}\n\n"
+        f"Исход: *{outcome_name}*\n"
         f"Сумма: *{amount:.2f} USDC*"
     )
     
@@ -440,11 +461,23 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Bet outcome selection
     if data.startswith("bet_"):
         parts = data.split("_")
-        outcome = parts[1]  # yes or no
+        outcome_index = int(parts[1])
         token_id = parts[2]
         
-        pending_bets[user_id]['outcome'] = outcome
-        pending_bets[user_id]['token_id'] = token_id
+        # Get full token ID from stored data
+        outcomes = pending_bets[user_id].get('outcomes', [])
+        tokens = pending_bets[user_id].get('tokens', [])
+        
+        if outcome_index < len(tokens):
+            full_token_id = tokens[outcome_index]
+            outcome_name = outcomes[outcome_index] if outcome_index < len(outcomes) else f"Outcome {outcome_index}"
+        else:
+            full_token_id = token_id
+            outcome_name = f"Outcome {outcome_index}"
+        
+        pending_bets[user_id]['outcome_index'] = outcome_index
+        pending_bets[user_id]['outcome_name'] = outcome_name
+        pending_bets[user_id]['token_id'] = full_token_id
         
         # Get wallet address
         if user_id in user_wallets:
@@ -464,10 +497,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("💵 Ввести сумму", callback_data="amount_custom")]
         ]
         
-        outcome_text = "YES ✅" if outcome == "yes" else "NO ❌"
-        
         await query.edit_message_text(
-            f"Выбрано: *{outcome_text}*\n\n"
+            f"Выбрано: *{outcome_name}*\n\n"
             f"💰 Баланс: {balance:.2f} USDC.e\n\n"
             f"Сумма ставки:",
             parse_mode='Markdown',
@@ -508,9 +539,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         try:
             client = await get_user_client(user_id)
-            market = bet['market']
-            token_id = market.get('yes_token_id') if bet['outcome'] == 'yes' else market.get('no_token_id')
+            token_id = bet.get('token_id')
             amount = bet['amount']
+            outcome_name = bet.get('outcome_name', 'Unknown')
             
             result = await client.place_market_order(
                 token_id=token_id,
@@ -522,6 +553,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if result.get('success'):
                 await query.edit_message_text(
                     f"✅ *Ставка принята!*\n\n"
+                    f"Исход: {outcome_name}\n"
                     f"Сумма: {amount:.2f} USDC\n"
                     f"Order: `{result.get('order_id', 'N/A')}`",
                     parse_mode='Markdown'
