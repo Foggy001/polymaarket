@@ -202,37 +202,75 @@ async def setwallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def positions(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show positions"""
+    """Show positions from Polymarket Data API"""
     user_id = update.effective_user.id
     
+    # Get wallet address
+    if user_id in user_wallets:
+        wallet_address = user_wallets[user_id]['funder_address']
+    else:
+        wallet_address = os.environ.get('POLYMARKET_FUNDER_ADDRESS')
+    
+    if not wallet_address:
+        await update.message.reply_text("❌ Кошелек не настроен. /setwallet")
+        return
+    
+    await update.message.reply_text("🔍 Загружаю позиции...")
+    
     try:
-        client = await get_user_client(user_id)
-        if not client:
-            await update.message.reply_text("❌ Кошелек не настроен. /setwallet")
-            return
+        import httpx
         
-        orders = await client.get_open_orders()
+        async with httpx.AsyncClient(timeout=15) as http:
+            # Get positions from Data API
+            resp = await http.get(
+                f"https://data-api.polymarket.com/positions",
+                params={"user": wallet_address}
+            )
+            
+            if resp.status_code != 200:
+                await update.message.reply_text(f"❌ Ошибка API: {resp.status_code}")
+                return
+            
+            positions_data = resp.json()
         
-        if not orders:
+        if not positions_data:
             await update.message.reply_text("📊 Нет активных позиций.")
             return
         
         text = "📊 *Ваши позиции:*\n\n"
         keyboard = []
         
-        for i, order in enumerate(orders[:10]):
-            token_id = order.get('asset_id', order.get('tokenID', 'N/A'))
-            size = order.get('size', '0')
-            price = order.get('price', '0')
+        for i, pos in enumerate(positions_data[:10]):
+            outcome = pos.get('outcome', 'N/A')
+            size = float(pos.get('size', 0))
+            current_value = float(pos.get('currentValue', 0))
+            pnl = float(pos.get('cashPnl', 0))
+            title = pos.get('title', '')[:30]
+            token_id = pos.get('asset', '')
             
-            text += f"{i+1}. @ ${price} - {size} shares\n"
-            keyboard.append([InlineKeyboardButton(f"🔴 Продать #{i+1}", callback_data=f"sell_{token_id[:30]}")])
+            pnl_emoji = "🟢" if pnl >= 0 else "🔴"
+            
+            text += f"*{i+1}. {title}...*\n"
+            text += f"   {outcome}: {size:.1f} shares\n"
+            text += f"   💰 ${current_value:.2f} {pnl_emoji} P&L: ${pnl:.2f}\n\n"
+            
+            if token_id:
+                keyboard.append([InlineKeyboardButton(
+                    f"🔴 Продать #{i+1}",
+                    callback_data=f"sellpos_{i}"
+                )])
+        
+        # Store positions for selling
+        pending_bets[user_id] = {'positions': positions_data}
         
         await update.message.reply_text(
             text,
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None
         )
+    except Exception as e:
+        logger.error(f"Positions error: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
     except Exception as e:
         logger.error(f"Positions error: {e}")
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
@@ -822,7 +860,85 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Ставка отменена")
         return
     
-    # Sell
+    # Sell position from /positions
+    if data.startswith("sellpos_"):
+        pos_idx = int(data.replace("sellpos_", ""))
+        positions_data = pending_bets.get(user_id, {}).get('positions', [])
+        
+        if pos_idx >= len(positions_data):
+            await query.edit_message_text("❌ Позиция не найдена")
+            return
+        
+        pos = positions_data[pos_idx]
+        token_id = pos.get('asset', '')
+        size = float(pos.get('size', 0))
+        outcome = pos.get('outcome', 'N/A')
+        title = pos.get('title', '')[:30]
+        
+        # Store for selling
+        pending_bets[user_id]['sell_position'] = {
+            'token_id': token_id,
+            'size': size,
+            'outcome': outcome,
+            'title': title
+        }
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("100%", callback_data="dosellpos_100"),
+                InlineKeyboardButton("50%", callback_data="dosellpos_50")
+            ],
+            [InlineKeyboardButton("❌ Отмена", callback_data="sell_cancel")]
+        ]
+        
+        await query.edit_message_text(
+            f"🔴 *Продать позицию*\n\n"
+            f"{title}...\n"
+            f"Исход: {outcome}\n"
+            f"Размер: {size:.1f} shares\n\n"
+            f"Сколько продать?",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+    
+    if data.startswith("dosellpos_"):
+        percent = int(data.replace("dosellpos_", ""))
+        sell_info = pending_bets.get(user_id, {}).get('sell_position', {})
+        
+        if not sell_info:
+            await query.edit_message_text("❌ Данные о позиции потеряны")
+            return
+        
+        token_id = sell_info['token_id']
+        size = sell_info['size']
+        sell_amount = size * (percent / 100)
+        
+        await query.edit_message_text(f"⏳ Продаю {sell_amount:.1f} shares...")
+        
+        try:
+            client = await get_user_client(user_id)
+            result = await client.place_market_order(
+                token_id=token_id,
+                side="SELL",
+                amount=sell_amount,
+                price_limit=0.01
+            )
+            
+            if result.get('success'):
+                await query.edit_message_text(
+                    f"✅ *Продано!*\n\n"
+                    f"Shares: {sell_amount:.1f}\n"
+                    f"Order ID: `{result.get('order_id', 'N/A')[:20]}...`",
+                    parse_mode='Markdown'
+                )
+            else:
+                await query.edit_message_text(f"❌ Ошибка: {result.get('error')}")
+        except Exception as e:
+            await query.edit_message_text(f"❌ Ошибка: {str(e)}")
+        return
+    
+    # Sell (old handler for backward compatibility)
     if data.startswith("sell_"):
         token_id = data.replace("sell_", "")
         
