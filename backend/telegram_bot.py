@@ -77,7 +77,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/balance - Баланс USDC\n"
         "/wallet - Текущий кошелек\n"
         "/setwallet - Сменить кошелек\n"
-        "/positions - Ваши позиции\n\n"
+        "/positions - Ваши позиции\n"
+        "/reset - Сбросить все данные\n\n"
         "Пример ссылки:\n"
         "`https://polymarket.com/sports/dota-2/...`",
         parse_mode='Markdown'
@@ -129,6 +130,59 @@ async def wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Полный адрес:\n`{address}`",
         parse_mode='Markdown'
     )
+
+
+async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reset all user data"""
+    user_id = update.effective_user.id
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Да, сбросить всё", callback_data="reset_confirm"),
+            InlineKeyboardButton("❌ Отмена", callback_data="reset_cancel")
+        ]
+    ]
+    
+    await update.message.reply_text(
+        "⚠️ *Сброс данных*\n\n"
+        "Будут удалены:\n"
+        "• Настройки кошелька\n"
+        "• Незавершенные ставки\n"
+        "• Все временные данные\n\n"
+        "Вы уверены?",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def handle_reset_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle reset confirmation"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    data = query.data
+    
+    if data == 'reset_cancel':
+        await query.edit_message_text("❌ Сброс отменен.")
+        return
+    
+    if data == 'reset_confirm':
+        # Clear all user data
+        if user_id in user_wallets:
+            del user_wallets[user_id]
+        if user_id in pending_bets:
+            del pending_bets[user_id]
+        
+        # Clear context data
+        context.user_data.clear()
+        
+        await query.edit_message_text(
+            "✅ *Данные сброшены!*\n\n"
+            "Все настройки удалены.\n"
+            "Используйте /setwallet для настройки нового кошелька.",
+            parse_mode='Markdown'
+        )
 
 
 async def setwallet_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -720,6 +774,7 @@ def main():
     app.add_handler(CommandHandler('balance', balance))
     app.add_handler(CommandHandler('wallet', wallet))
     app.add_handler(CommandHandler('positions', positions))
+    app.add_handler(CommandHandler('reset', reset))
     app.add_handler(wallet_conv)
     
     # Callback handlers
@@ -728,6 +783,7 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_bet_confirmation, pattern='^(confirm_bet|cancel_bet)$'))
     app.add_handler(CallbackQueryHandler(handle_sell, pattern='^sell_'))
     app.add_handler(CallbackQueryHandler(handle_sell_confirm, pattern='^(sellconf_|cancel_sell)'))
+    app.add_handler(CallbackQueryHandler(handle_reset_confirmation, pattern='^reset_'))
     
     # Message handlers
     app.add_handler(MessageHandler(
