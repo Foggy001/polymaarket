@@ -355,60 +355,69 @@ async def handle_polymarket_link(update: Update, context: ContextTypes.DEFAULT_T
     
     try:
         import json as json_lib
-        # Fetch market from Gamma API directly for full data
         import httpx
-        async with httpx.AsyncClient(timeout=15) as http:
-            resp = await http.get(f"https://gamma-api.polymarket.com/markets?slug={slug}")
-            markets = resp.json()
         
-        if not markets:
+        # Fetch EVENT with all related markets
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.get(f"https://gamma-api.polymarket.com/events?slug={slug}")
+            events = resp.json()
+        
+        if not events:
             await update.message.reply_text("❌ Событие не найдено")
             return
         
-        market = markets[0]
+        event = events[0] if isinstance(events, list) else events
+        all_markets = event.get('markets', [])
         
-        question = market.get('question', 'Unknown')
+        if not all_markets:
+            await update.message.reply_text("❌ Нет доступных рынков")
+            return
         
-        # Parse outcomes and prices (they come as JSON strings)
-        outcomes_raw = market.get('outcomes', '["Yes", "No"]')
-        prices_raw = market.get('outcomePrices', '["0", "0"]')
-        
-        if isinstance(outcomes_raw, str):
-            outcomes = json_lib.loads(outcomes_raw)
-        else:
-            outcomes = outcomes_raw
-            
-        if isinstance(prices_raw, str):
-            outcome_prices = json_lib.loads(prices_raw)
-        else:
-            outcome_prices = prices_raw
-        
-        tokens = market.get('clobTokenIds', [])
-        
-        # Store market data
+        # Store all markets
         pending_bets[user_id] = {
-            'market': market,
-            'slug': slug,
-            'outcomes': outcomes,
-            'tokens': tokens
+            'event': event,
+            'all_markets': all_markets,
+            'slug': slug
         }
         
-        # Create buttons for each outcome
+        # Group markets by type
+        market_types = {
+            'moneyline': '🏆 Победитель матча',
+            'child_moneyline': '🎮 Победитель карты',
+            'map_handicap': '📊 Фора',
+            'totals': '📈 Тотал карт',
+            'kill_over_under_game': '💀 Тотал убийств',
+            'first_blood_game': '🩸 Первая кровь',
+        }
+        
+        # Create menu with market categories
         keyboard = []
-        for i, outcome in enumerate(outcomes):
-            if i < len(tokens):
-                price = float(outcome_prices[i]) if i < len(outcome_prices) else 0
-                price_percent = int(price * 100)
+        added_types = set()
+        
+        for m in all_markets:
+            mtype = m.get('sportsMarketType', 'other')
+            if mtype in market_types and mtype not in added_types:
+                added_types.add(mtype)
                 keyboard.append([
                     InlineKeyboardButton(
-                        f"{outcome} ({price_percent}%)", 
-                        callback_data=f"bet_{i}_{tokens[i][:25]}"
+                        market_types[mtype],
+                        callback_data=f"mtype_{mtype}"
                     )
                 ])
         
+        # Add "other" for remaining types
+        other_count = len([m for m in all_markets if m.get('sportsMarketType') not in market_types])
+        if other_count > 0:
+            keyboard.append([
+                InlineKeyboardButton(f"🎲 Другие ({other_count})", callback_data="mtype_other")
+            ])
+        
+        event_title = event.get('title', 'Событие')
+        
         await update.message.reply_text(
-            f"🎯 *{question}*\n\n"
-            f"Выберите исход:",
+            f"🎯 *{event_title}*\n\n"
+            f"Всего рынков: {len(all_markets)}\n\n"
+            f"Выберите тип ставки:",
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
@@ -470,6 +479,163 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data == "reset_no":
         await query.edit_message_text("❌ Сброс отменен")
+        return
+    
+    # Market type selection
+    if data.startswith("mtype_"):
+        import json as json_lib
+        mtype = data.replace("mtype_", "")
+        all_markets = pending_bets[user_id].get('all_markets', [])
+        
+        market_types = {
+            'moneyline': '🏆 Победитель матча',
+            'child_moneyline': '🎮 Победитель карты',
+            'map_handicap': '📊 Фора',
+            'totals': '📈 Тотал карт',
+            'kill_over_under_game': '💀 Тотал убийств',
+            'first_blood_game': '🩸 Первая кровь',
+        }
+        
+        # Filter markets by type
+        if mtype == "other":
+            filtered = [m for m in all_markets if m.get('sportsMarketType') not in market_types]
+        else:
+            filtered = [m for m in all_markets if m.get('sportsMarketType') == mtype]
+        
+        if not filtered:
+            await query.edit_message_text("❌ Нет рынков этого типа")
+            return
+        
+        # Store filtered markets
+        pending_bets[user_id]['filtered_markets'] = filtered
+        
+        # Show markets list
+        keyboard = []
+        for i, m in enumerate(filtered[:15]):  # Limit to 15
+            question = m.get('question', 'Unknown')
+            # Shorten question for button
+            short_q = question[:40] + "..." if len(question) > 40 else question
+            keyboard.append([
+                InlineKeyboardButton(short_q, callback_data=f"market_{i}")
+            ])
+        
+        keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="back_to_types")])
+        
+        type_name = market_types.get(mtype, 'Другие')
+        await query.edit_message_text(
+            f"*{type_name}*\n\nВыберите рынок:",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+    
+    # Back to market types
+    if data == "back_to_types":
+        all_markets = pending_bets[user_id].get('all_markets', [])
+        event = pending_bets[user_id].get('event', {})
+        
+        market_types = {
+            'moneyline': '🏆 Победитель матча',
+            'child_moneyline': '🎮 Победитель карты',
+            'map_handicap': '📊 Фора',
+            'totals': '📈 Тотал карт',
+            'kill_over_under_game': '💀 Тотал убийств',
+            'first_blood_game': '🩸 Первая кровь',
+        }
+        
+        keyboard = []
+        added_types = set()
+        
+        for m in all_markets:
+            mtype = m.get('sportsMarketType', 'other')
+            if mtype in market_types and mtype not in added_types:
+                added_types.add(mtype)
+                keyboard.append([InlineKeyboardButton(market_types[mtype], callback_data=f"mtype_{mtype}")])
+        
+        other_count = len([m for m in all_markets if m.get('sportsMarketType') not in market_types])
+        if other_count > 0:
+            keyboard.append([InlineKeyboardButton(f"🎲 Другие ({other_count})", callback_data="mtype_other")])
+        
+        await query.edit_message_text(
+            f"🎯 *{event.get('title', 'Событие')}*\n\nВыберите тип ставки:",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+    
+    # Market selection
+    if data.startswith("market_"):
+        import json as json_lib
+        market_idx = int(data.replace("market_", ""))
+        filtered_markets = pending_bets[user_id].get('filtered_markets', [])
+        
+        if market_idx >= len(filtered_markets):
+            await query.edit_message_text("❌ Рынок не найден")
+            return
+        
+        market = filtered_markets[market_idx]
+        pending_bets[user_id]['market'] = market
+        
+        question = market.get('question', 'Unknown')
+        
+        # Parse outcomes
+        outcomes_raw = market.get('outcomes', '["Yes", "No"]')
+        prices_raw = market.get('outcomePrices', '["0", "0"]')
+        
+        if isinstance(outcomes_raw, str):
+            outcomes = json_lib.loads(outcomes_raw)
+        else:
+            outcomes = outcomes_raw
+            
+        if isinstance(prices_raw, str):
+            outcome_prices = json_lib.loads(prices_raw)
+        else:
+            outcome_prices = prices_raw
+        
+        tokens = market.get('clobTokenIds', [])
+        
+        pending_bets[user_id]['outcomes'] = outcomes
+        pending_bets[user_id]['tokens'] = tokens
+        
+        # Show outcomes
+        keyboard = []
+        for i, outcome in enumerate(outcomes):
+            if i < len(tokens):
+                price = float(outcome_prices[i]) if i < len(outcome_prices) else 0
+                price_percent = int(price * 100)
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"{outcome} ({price_percent}%)",
+                        callback_data=f"bet_{i}_{tokens[i][:25]}"
+                    )
+                ])
+        
+        keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="back_to_markets")])
+        
+        await query.edit_message_text(
+            f"🎯 *{question}*\n\nВыберите исход:",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+    
+    # Back to markets list
+    if data == "back_to_markets":
+        import json as json_lib
+        filtered = pending_bets[user_id].get('filtered_markets', [])
+        
+        keyboard = []
+        for i, m in enumerate(filtered[:15]):
+            question = m.get('question', 'Unknown')
+            short_q = question[:40] + "..." if len(question) > 40 else question
+            keyboard.append([InlineKeyboardButton(short_q, callback_data=f"market_{i}")])
+        
+        keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="back_to_types")])
+        
+        await query.edit_message_text(
+            "Выберите рынок:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         return
     
     # Bet outcome selection
