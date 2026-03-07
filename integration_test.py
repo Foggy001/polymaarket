@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timezone
 
 class Dota2BotIntegrationTester:
-    def __init__(self, base_url: str = "https://dota2-arbitrage-bot.preview.emergentagent.com"):
+    def __init__(self, base_url: str = "https://polygon-trader-1.preview.emergentagent.com"):
         self.base_url = base_url.rstrip("/")
         self.session = requests.Session()
         self.session.timeout = 30

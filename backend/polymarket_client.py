@@ -27,6 +27,43 @@ except ImportError:
     logger.warning("py-clob-client not available, using HTTP-only mode")
 
 
+def patch_httpx_proxy(proxy_url: str):
+    """
+    Patch py-clob-client's httpx client to use proxy.
+    This must be called BEFORE any API calls are made.
+    """
+    try:
+        # Import the helpers module directly
+        import py_clob_client.http_helpers.helpers as helpers
+        
+        # Close existing client if any
+        if hasattr(helpers, '_http_client') and helpers._http_client:
+            try:
+                helpers._http_client.close()
+            except:
+                pass
+        
+        # Create new client with proxy - using mounts for better control
+        transport = httpx.HTTPTransport(proxy=proxy_url)
+        new_client = httpx.Client(
+            http2=True,
+            timeout=60.0,
+            mounts={
+                "http://": transport,
+                "https://": transport,
+            }
+        )
+        
+        # Replace the global client
+        helpers._http_client = new_client
+        logger.info(f"Successfully patched py-clob-client httpx with proxy: {proxy_url[:40]}...")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to patch httpx: {e}")
+        return False
+
+
 class PolymarketClient:
     """
     Client for interacting with Polymarket's CLOB API
@@ -79,18 +116,30 @@ class PolymarketClient:
         
     async def initialize(self):
         """Initialize the client"""
-        # Set proxy environment variables for py-clob-client
+        # IMPORTANT: Patch py-clob-client's httpx BEFORE creating ClobClient
         if self.proxy_url:
-            os.environ['HTTP_PROXY'] = self.proxy_url
-            os.environ['HTTPS_PROXY'] = self.proxy_url
-            logger.info(f"Proxy configured")
-            self.http_client = httpx.AsyncClient(timeout=30.0, proxy=self.proxy_url)
+            success = patch_httpx_proxy(self.proxy_url)
+            if success:
+                logger.info(f"Proxy configured for py-clob-client: {self.proxy_url[:40]}...")
+            else:
+                logger.warning("Failed to configure proxy for py-clob-client")
+            
+            # Also create async client with proxy for our own requests (Gamma API)
+            transport = httpx.AsyncHTTPTransport(proxy=self.proxy_url)
+            self.http_client = httpx.AsyncClient(
+                timeout=30.0,
+                mounts={
+                    "http://": transport,
+                    "https://": transport,
+                }
+            )
         else:
             self.http_client = httpx.AsyncClient(timeout=30.0)
         
         if HAS_CLOB_CLIENT:
             try:
                 logger.info(f"Initializing with funder: {self.funder_address}")
+                logger.info(f"Using proxy: {self.proxy_url[:40] if self.proxy_url else 'None'}...")
                 
                 self.clob_client = ClobClient(
                     host=CLOB_HOST,
@@ -111,12 +160,12 @@ class PolymarketClient:
                     self.api_secret = creds.api_secret
                     self.api_passphrase = creds.api_passphrase
                     self.clob_client.set_api_creds(creds)
-                    logger.info("API credentials set!")
+                    logger.info("API credentials set successfully!")
                 except Exception as e:
                     logger.warning(f"Could not derive credentials: {e}")
                 
                 self.initialized = True
-                logger.info("PolymarketClient initialized")
+                logger.info("PolymarketClient initialized with proxy support")
                 
             except Exception as e:
                 logger.error(f"Failed to initialize: {e}")

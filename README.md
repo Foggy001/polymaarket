@@ -16,7 +16,7 @@
 ```
 "dota2-arbitrage-bot"
 {
-    "uri"           "https://dota2-arbitrage-bot.preview.emergentagent.com/api/gsi"
+    "uri"           "https://polygon-trader-1.preview.emergentagent.com/api/gsi"
     "timeout"       "5.0"
     "buffer"        "0.1"
     "throttle"      "0.1"
@@ -104,7 +104,7 @@
 Для изменения отправьте POST на `/api/bot/config`:
 
 ```bash
-curl -X POST https://dota2-arbitrage-bot.preview.emergentagent.com/api/bot/config \
+curl -X POST https://polygon-trader-1.preview.emergentagent.com/api/bot/config \
   -H "Content-Type: application/json" \
   -d '{"gold_advantage_threshold": 3000, "kills_threshold": 4, "min_game_time": 300, "bet_amount": 10.0}'
 ```
