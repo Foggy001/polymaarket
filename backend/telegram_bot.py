@@ -133,7 +133,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/setproxy - Сменить прокси\n"
         "/reset - Сбросить все данные\n\n"
         "Пример ссылки:\n"
-        "`https://polymarket.com/sports/dota-2/...`",
+        "`https://polymarket.com/esports/dota-2/...`",
         parse_mode='Markdown'
     )
 
@@ -464,8 +464,16 @@ async def handle_polymarket_link(update: Update, context: ContextTypes.DEFAULT_T
     user_id = update.effective_user.id
     text = update.message.text
     
-    # Extract slug
-    match = re.search(r'polymarket\.com/(?:event/|sports/[^/]+/)?([a-zA-Z0-9-]+)', text)
+    # Extract slug - support various URL formats:
+    # /event/slug
+    # /sports/dota-2/slug
+    # /esports/dota-2/tournament/slug
+    # /esports/dota-2/esl-one/slug
+    match = re.search(r'polymarket\.com/(?:event/|(?:sports|esports)/[^/]+/(?:[^/]+/)?)?([a-zA-Z0-9-]+)(?:\?|$)', text)
+    if not match:
+        # Try to get last path segment as slug
+        match = re.search(r'polymarket\.com/.+/([a-zA-Z0-9-]+)(?:\?|$)', text)
+    
     if not match:
         await update.message.reply_text("❌ Не могу распознать ссылку")
         return
