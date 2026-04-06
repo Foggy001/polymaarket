@@ -897,6 +897,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             token_id = bet.get('token_id')
             amount = bet['amount']
             outcome_name = bet.get('outcome_name', 'Unknown')
+            outcome_index = bet.get('outcome_index', 0)
+            tokens = bet.get('tokens', [])
+            outcomes = bet.get('outcomes', [])
             
             result = await client.place_market_order(
                 token_id=token_id,
@@ -906,31 +909,46 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
             if result.get('success'):
-                # Store bet info for potential fork
-                pending_bets[user_id] = {
-                    'last_bet': {
-                        'token_id': token_id,
-                        'amount': amount,
-                        'outcome_name': outcome_name,
-                        'outcome_index': bet.get('outcome_index', 0),
-                        'market': bet.get('market', {}),
-                        'tokens': bet.get('tokens', []),
-                        'outcomes': bet.get('outcomes', []),
-                        'prices': bet.get('prices', [])
+                # Check if fork is possible (need opposite outcome)
+                if len(tokens) >= 2:
+                    opposite_index = 1 if outcome_index == 0 else 0
+                    opposite_token = tokens[opposite_index]
+                    opposite_outcome = outcomes[opposite_index] if opposite_index < len(outcomes) else "Opposite"
+                    
+                    # Store fork info
+                    pending_bets[user_id] = {
+                        'fork': {
+                            'opposite_token': opposite_token,
+                            'opposite_outcome': opposite_outcome,
+                            'original_amount': amount
+                        }
                     }
-                }
-                
-                # Add fork button
-                keyboard = [[InlineKeyboardButton("🔀 Сделать вилку", callback_data="fork_start")]]
-                
-                await query.edit_message_text(
-                    f"✅ *Ставка принята!*\n\n"
-                    f"Исход: {outcome_name}\n"
-                    f"Сумма: {amount:.2f} USDC\n"
-                    f"Order: `{result.get('order_id', 'N/A')}`",
-                    parse_mode='Markdown',
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
+                    
+                    keyboard = [
+                        [
+                            InlineKeyboardButton("✅ Да", callback_data="fork_yes"),
+                            InlineKeyboardButton("❌ Нет", callback_data="fork_no")
+                        ]
+                    ]
+                    
+                    await query.edit_message_text(
+                        f"✅ *Ставка принята!*\n\n"
+                        f"Исход: {outcome_name}\n"
+                        f"Сумма: {amount:.2f} USDC\n\n"
+                        f"🔀 *Сделать вилку на {opposite_outcome}?*",
+                        parse_mode='Markdown',
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
+                else:
+                    # No opposite outcome available
+                    if user_id in pending_bets:
+                        del pending_bets[user_id]
+                    await query.edit_message_text(
+                        f"✅ *Ставка принята!*\n\n"
+                        f"Исход: {outcome_name}\n"
+                        f"Сумма: {amount:.2f} USDC",
+                        parse_mode='Markdown'
+                    )
             else:
                 await query.edit_message_text(f"❌ Ошибка: {result.get('error')}")
                 if user_id in pending_bets:
@@ -948,7 +966,29 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     # Fork (Вилка) handlers
+    if data == "fork_yes":
+        fork = pending_bets.get(user_id, {}).get('fork', {})
+        if not fork:
+            await query.edit_message_text("❌ Данные о вилке не найдены")
+            return
+        
+        user_states[user_id] = 'waiting_fork_price'
+        
+        await query.edit_message_text(
+            f"🔀 *Вилка на {fork['opposite_outcome']}*\n\n"
+            f"Введите цену лимитки (например: 10 для 10% или 0.10):",
+            parse_mode='Markdown'
+        )
+        return
+    
+    if data == "fork_no":
+        if user_id in pending_bets:
+            del pending_bets[user_id]
+        await query.edit_message_text("✅ Ставка завершена без вилки")
+        return
+    
     if data == "fork_start":
+        # Legacy handler - redirect to fork_yes flow
         last_bet = pending_bets.get(user_id, {}).get('last_bet', {})
         if not last_bet:
             await query.edit_message_text("❌ Данные о ставке не найдены")
@@ -958,7 +998,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tokens = last_bet.get('tokens', [])
         outcomes = last_bet.get('outcomes', [])
         
-        # Find opposite outcome
         if len(tokens) < 2:
             await query.edit_message_text("❌ Нет противоположного исхода для вилки")
             return
@@ -967,7 +1006,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         opposite_token = tokens[opposite_index]
         opposite_outcome = outcomes[opposite_index] if opposite_index < len(outcomes) else "Opposite"
         
-        # Store fork info
         pending_bets[user_id]['fork'] = {
             'opposite_token': opposite_token,
             'opposite_outcome': opposite_outcome,
@@ -977,9 +1015,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_states[user_id] = 'waiting_fork_price'
         
         await query.edit_message_text(
-            f"🔀 *Вилка*\n\n"
-            f"Противоположный исход: *{opposite_outcome}*\n\n"
-            f"Введите цену лимитки (например: 0.10 для 10%):",
+            f"🔀 *Вилка на {opposite_outcome}*\n\n"
+            f"Введите цену лимитки (например: 10 для 10% или 0.10):",
             parse_mode='Markdown'
         )
         return
