@@ -423,6 +423,65 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_bet_confirmation(update, user_id)
         return
     
+    elif state == 'waiting_fork_price':
+        # Receiving fork limit price
+        try:
+            price = float(text.replace('%', '').replace(',', '.'))
+            # If user entered percentage (like 10), convert to decimal
+            if price > 1:
+                price = price / 100
+        except ValueError:
+            await update.message.reply_text("❌ Введите число. Например: 0.10 или 10")
+            return
+        
+        if price <= 0 or price >= 1:
+            await update.message.reply_text("❌ Цена должна быть от 0.01 до 0.99")
+            return
+        
+        fork = pending_bets.get(user_id, {}).get('fork', {})
+        if not fork:
+            await update.message.reply_text("❌ Данные вилки не найдены")
+            del user_states[user_id]
+            return
+        
+        original_amount = fork.get('original_amount', 0)
+        
+        # Calculate fork amount: amount that covers original bet
+        # If original bet wins: we lose fork_amount
+        # If fork wins: we get fork_amount / price
+        # To cover original: fork_amount / price >= original_amount
+        # So: fork_amount >= original_amount * price
+        fork_amount = original_amount * price
+        
+        # Round up to ensure coverage
+        fork_amount = round(fork_amount + 0.01, 2)
+        
+        # Minimum 1 USDC
+        if fork_amount < 1:
+            fork_amount = 1.0
+        
+        pending_bets[user_id]['fork']['price'] = price
+        pending_bets[user_id]['fork']['amount'] = fork_amount
+        del user_states[user_id]
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ Подтвердить", callback_data="fork_confirm_yes"),
+                InlineKeyboardButton("❌ Отмена", callback_data="fork_confirm_no")
+            ]
+        ]
+        
+        await update.message.reply_text(
+            f"🔀 *Вилка - подтверждение*\n\n"
+            f"Исход: *{fork['opposite_outcome']}*\n"
+            f"Цена лимитки: *{price:.2f}* ({price*100:.0f}%)\n"
+            f"Сумма: *{fork_amount:.2f} USDC*\n\n"
+            f"_(автоматически рассчитано для покрытия ставки {original_amount:.2f} USDC)_",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+    
     elif state == 'waiting_proxy':
         # Receiving proxy
         proxy_str = text.strip()
@@ -711,6 +770,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         pending_bets[user_id]['outcomes'] = outcomes
         pending_bets[user_id]['tokens'] = tokens
+        pending_bets[user_id]['prices'] = outcome_prices
         
         # Show outcomes
         keyboard = []
@@ -846,18 +906,37 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
             if result.get('success'):
+                # Store bet info for potential fork
+                pending_bets[user_id] = {
+                    'last_bet': {
+                        'token_id': token_id,
+                        'amount': amount,
+                        'outcome_name': outcome_name,
+                        'outcome_index': bet.get('outcome_index', 0),
+                        'market': bet.get('market', {}),
+                        'tokens': bet.get('tokens', []),
+                        'outcomes': bet.get('outcomes', []),
+                        'prices': bet.get('prices', [])
+                    }
+                }
+                
+                # Add fork button
+                keyboard = [[InlineKeyboardButton("🔀 Сделать вилку", callback_data="fork_start")]]
+                
                 await query.edit_message_text(
                     f"✅ *Ставка принята!*\n\n"
                     f"Исход: {outcome_name}\n"
                     f"Сумма: {amount:.2f} USDC\n"
                     f"Order: `{result.get('order_id', 'N/A')}`",
-                    parse_mode='Markdown'
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup(keyboard)
                 )
             else:
                 await query.edit_message_text(f"❌ Ошибка: {result.get('error')}")
+                if user_id in pending_bets:
+                    del pending_bets[user_id]
         except Exception as e:
             await query.edit_message_text(f"❌ Ошибка: {str(e)}")
-        finally:
             if user_id in pending_bets:
                 del pending_bets[user_id]
         return
@@ -867,6 +946,88 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             del pending_bets[user_id]
         await query.edit_message_text("❌ Ставка отменена")
         return
+    
+    # Fork (Вилка) handlers
+    if data == "fork_start":
+        last_bet = pending_bets.get(user_id, {}).get('last_bet', {})
+        if not last_bet:
+            await query.edit_message_text("❌ Данные о ставке не найдены")
+            return
+        
+        outcome_index = last_bet.get('outcome_index', 0)
+        tokens = last_bet.get('tokens', [])
+        outcomes = last_bet.get('outcomes', [])
+        
+        # Find opposite outcome
+        if len(tokens) < 2:
+            await query.edit_message_text("❌ Нет противоположного исхода для вилки")
+            return
+        
+        opposite_index = 1 if outcome_index == 0 else 0
+        opposite_token = tokens[opposite_index]
+        opposite_outcome = outcomes[opposite_index] if opposite_index < len(outcomes) else "Opposite"
+        
+        # Store fork info
+        pending_bets[user_id]['fork'] = {
+            'opposite_token': opposite_token,
+            'opposite_outcome': opposite_outcome,
+            'original_amount': last_bet.get('amount', 0)
+        }
+        
+        user_states[user_id] = 'waiting_fork_price'
+        
+        await query.edit_message_text(
+            f"🔀 *Вилка*\n\n"
+            f"Противоположный исход: *{opposite_outcome}*\n\n"
+            f"Введите цену лимитки (например: 0.10 для 10%):",
+            parse_mode='Markdown'
+        )
+        return
+    
+    if data.startswith("fork_confirm_"):
+        action = data.replace("fork_confirm_", "")
+        
+        if action == "no":
+            if user_id in pending_bets:
+                del pending_bets[user_id]
+            await query.edit_message_text("❌ Вилка отменена")
+            return
+        
+        if action == "yes":
+            fork = pending_bets.get(user_id, {}).get('fork', {})
+            if not fork:
+                await query.edit_message_text("❌ Данные вилки не найдены")
+                return
+            
+            await query.edit_message_text("⏳ Создаю лимитку...")
+            
+            try:
+                client = await get_user_client(user_id)
+                
+                result = await client.place_limit_order(
+                    token_id=fork['opposite_token'],
+                    side="BUY",
+                    price=fork['price'],
+                    size=fork['amount']
+                )
+                
+                if result.get('success'):
+                    await query.edit_message_text(
+                        f"✅ *Вилка создана!*\n\n"
+                        f"Исход: {fork['opposite_outcome']}\n"
+                        f"Цена: {fork['price']}\n"
+                        f"Сумма: {fork['amount']:.2f} USDC\n"
+                        f"Order: `{result.get('order_id', 'N/A')}`",
+                        parse_mode='Markdown'
+                    )
+                else:
+                    await query.edit_message_text(f"❌ Ошибка: {result.get('error')}")
+            except Exception as e:
+                await query.edit_message_text(f"❌ Ошибка: {str(e)}")
+            finally:
+                if user_id in pending_bets:
+                    del pending_bets[user_id]
+            return
     
     # Sell position from /positions
     if data.startswith("sellpos_"):
