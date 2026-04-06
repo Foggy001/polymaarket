@@ -456,9 +456,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Round up to ensure coverage
         fork_amount = round(fork_amount + 0.01, 2)
         
-        # Minimum 1 USDC
-        if fork_amount < 1:
-            fork_amount = 1.0
+        # Minimum 5 USDC (Polymarket requirement)
+        if fork_amount < 5:
+            fork_amount = 5.0
         
         pending_bets[user_id]['fork']['price'] = price
         pending_bets[user_id]['fork']['amount'] = fork_amount
